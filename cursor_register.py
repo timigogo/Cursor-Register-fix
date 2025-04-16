@@ -147,17 +147,25 @@ def register_cursor(reg_email):
     turnstile_patch_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "turnstilePatch"))
     options.add_extension(turnstile_patch_path)
 
-    # If fail to pass the cloudflare in headless mode, try to align the user agent with your real browser
+    # If fail to pass the cloudflare in headless mode...
     if enable_headless: 
-        from platform import platform
-        if platform == "linux" or platform == "linux2":
+        from platform import platform 
+        # --- Initialize platformIdentifier with a default --- 
+        platformIdentifier = "Unknown" # Default value
+        
+        # --- Call platform() for comparison --- 
+        current_platform = platform().lower() # Get platform string and make lowercase
+        if "linux" in current_platform: 
             platformIdentifier = "X11; Linux x86_64"
-        elif platform == "darwin":
+        elif "darwin" in current_platform: 
             platformIdentifier = "Macintosh; Intel Mac OS X 10_15_7"
-        elif platform == "win32":
+        elif "windows" in current_platform or "win32" in current_platform: # Check for windows variants
             platformIdentifier = "Windows NT 10.0; Win64; x64"
+        
+        print(f"[Debug] Detected platform: {current_platform}, setting platformIdentifier: {platformIdentifier}") # Add log
+
         # Please align version with your Chrome
-        chrome_version = "130.0.0.0"        
+        chrome_version = "130.0.0.0" # Keep this updated if needed        
         options.set_user_agent(f"Mozilla/5.0 ({platformIdentifier}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_version} Safari/537.36")
         options.headless()
 
