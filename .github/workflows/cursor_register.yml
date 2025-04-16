@@ -27,6 +27,14 @@ on:
         description: '接收邮件的 Gmail 应用密码'
         required: true
         type: string
+      action_type:
+        description: '执行的操作类型 (signin 或 signup)'
+        required: true
+        type: choice
+        options:
+          - signin
+          - signup
+        default: 'signup'
 
 jobs:
   build:
