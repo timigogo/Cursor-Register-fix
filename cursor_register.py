@@ -28,11 +28,6 @@ hide_account_info = os.getenv('HIDE_ACCOUNT_INFO', 'false').lower() == 'true'
 enable_headless = os.getenv('ENABLE_HEADLESS', 'false').lower() == 'true'
 enable_browser_log = os.getenv('ENABLE_BROWSER_LOG', 'true').lower() == 'true' or not enable_headless
 
-# --- 添加调试日志 ---
-print(f"[Debug] ENABLE_HEADLESS environment variable: {os.getenv('ENABLE_HEADLESS')}")
-print(f"[Debug] enable_headless variable set to: {enable_headless}")
-# --- 结束调试日志 ---
-
 # 新增：从环境变量读取核心配置
 registration_email = os.getenv('REGISTRATION_EMAIL')
 receiving_gmail_address = os.getenv('RECEIVING_GMAIL_ADDRESS')
@@ -147,25 +142,17 @@ def register_cursor(reg_email):
     turnstile_patch_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "turnstilePatch"))
     options.add_extension(turnstile_patch_path)
 
-    # If fail to pass the cloudflare in headless mode...
+    # If fail to pass the cloudflare in headless mode, try to align the user agent with your real browser
     if enable_headless: 
-        from platform import platform 
-        # --- Initialize platformIdentifier with a default --- 
-        platformIdentifier = "Unknown" # Default value
-        
-        # --- Call platform() for comparison --- 
-        current_platform = platform().lower() # Get platform string and make lowercase
-        if "linux" in current_platform: 
+        from platform import platform
+        if platform == "linux" or platform == "linux2":
             platformIdentifier = "X11; Linux x86_64"
-        elif "darwin" in current_platform: 
+        elif platform == "darwin":
             platformIdentifier = "Macintosh; Intel Mac OS X 10_15_7"
-        elif "windows" in current_platform or "win32" in current_platform: # Check for windows variants
+        elif platform == "win32":
             platformIdentifier = "Windows NT 10.0; Win64; x64"
-        
-        print(f"[Debug] Detected platform: {current_platform}, setting platformIdentifier: {platformIdentifier}") # Add log
-
         # Please align version with your Chrome
-        chrome_version = "130.0.0.0" # Keep this updated if needed        
+        chrome_version = "130.0.0.0"        
         options.set_user_agent(f"Mozilla/5.0 ({platformIdentifier}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_version} Safari/537.36")
         options.headless()
 
