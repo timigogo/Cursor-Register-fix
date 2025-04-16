@@ -113,10 +113,42 @@ def register_cursor_core(reg_email, options):
 
     # 浏览器退出逻辑
     # final_status = token is not None # 这行已被上面的逻辑替代
+    
+    # --- 在退出浏览器前检查余额 (如果成功获取 token) ---
+    balance = 0
+    is_low_balance = False
+    user_id = None
+    if final_status and token:
+        try:
+            # 解析 User ID
+            try:
+                payload_b64 = token.split('.')[1]
+                payload_b64 += '=' * (-len(payload_b64) % 4)
+                payload_json = base64.urlsafe_b64decode(payload_b64).decode('utf-8')
+                payload = json.loads(payload_json)
+                user_id = payload.get('sub')
+            except Exception as jwt_err:
+                print(f"[JWT Decode Error in Core] Failed to decode or parse JWT: {jwt_err}")
+
+            # 获取 Usage
+            if user_id:
+                print(f"[Balance Check in Core] Getting usage for UserID: {user_id}...")
+                # 使用当前的 register 对象 (持有已认证的浏览器)
+                usage = register.get_usage(user_id)
+                if usage and 'gpt-4' in usage:
+                    balance = usage["gpt-4"]["maxRequestUsage"] - usage["gpt-4"]["numRequests"]
+                    threshold = 50
+                    is_low_balance = balance <= threshold
+                    print(f"[Balance Check in Core] Email: {email_address}, Balance: {balance}, Low Balance: {is_low_balance}")
+                else:
+                    print(f"[Balance Check Warning in Core] Could not get valid usage data. Usage response: {usage}")
+            else:
+                 print("[Balance Check Skip in Core] Skipping balance check due to missing User ID.")
+        except Exception as e:
+            print(f"[Balance Check Error in Core] An unexpected error occurred: {e}")
+    # --- 余额检查结束 ---
+            
     if not final_status or not enable_browser_log:
-        # 确保 final_tab 存在才尝试关闭，尽管 quit 会关闭所有
-        # if final_tab: 
-        #    try: final_tab.close() except: pass 
         # 退出浏览器实例
         if browser:
             try:
@@ -130,7 +162,9 @@ def register_cursor_core(reg_email, options):
 
     ret = {
         "username": email_address,
-        "token": token
+        "token": token,
+        "balance": balance, # 添加余额到返回结果
+        "is_low_balance": is_low_balance # 添加低余额状态到返回结果
     }
 
     return ret
@@ -167,82 +201,14 @@ def register_cursor(reg_email):
 
     if len(results) > 0:
         formatted_date = datetime.now().strftime("%Y-%m-%d")
-
-        fieldnames = results[0].keys()
-        # Write username, token into a csv file
-        with open(f"./output_{formatted_date}.csv", 'a', newline='') as file:
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            writer.writerows(results)
-        
-        # 修改token.csv文件，加入邮箱和额度状态信息
         token_csv_data = []
-        for row in results:
-            token = row['token']
-            username = row['username']
-            
-            # 增加余额状态检查
-            is_low_balance = False
-            balance = 0  # 默认值
-            user_id = None # 初始化 user_id
-            try:
-                if token is not None:
-                    # --- 解析 JWT Token 以获取 User ID --- 
-                    try:
-                        # JWT 通常是 header.payload.signature
-                        payload_b64 = token.split('.')[1]
-                        # 需要补全 Base64 padding
-                        payload_b64 += '=' * (-len(payload_b64) % 4)
-                        # 解码 Base64 并解析 JSON
-                        payload_json = base64.urlsafe_b64decode(payload_b64).decode('utf-8')
-                        payload = json.loads(payload_json)
-                        # User ID 在 'sub' 字段
-                        user_id = payload.get('sub') 
-                        if user_id:
-                           print(f"[JWT Decode] Successfully extracted User ID: {user_id}")
-                        else:
-                           print("[JWT Decode Error] 'sub' field not found in JWT payload.")
-                           # 可以选择尝试旧格式解析作为后备
-                           # if '%3A%3A' in token:
-                           #    user_id = token.split('%3A%3A')[0]
-                           #    print(f"[Fallback] Using old format User ID: {user_id}")
-                    except Exception as jwt_err:
-                        print(f"[JWT Decode Error] Failed to decode or parse JWT: {jwt_err}")
-                        # 也可以尝试旧格式作为后备
-                        # if '%3A%3A' in token:
-                        #    user_id = token.split('%3A%3A')[0]
-                        #    print(f"[Fallback] Using old format User ID: {user_id}")
-
-                    # --- 使用提取到的 User ID 获取使用量 ---
-                    if user_id: # 仅当成功提取到 User ID 时才继续
-                        # user_id = token.split("%3A%3A")[0] # 旧逻辑移除
-                        temp_options = copy.deepcopy(options)
-                        temp_browser = Chromium(temp_options)
-                        register_for_balance = CursorRegister(temp_browser, None) 
-                        usage = register_for_balance.get_usage(user_id) 
-                        
-                        # 添加检查确保 usage 和 gpt-4 键存在
-                        if usage and 'gpt-4' in usage:
-                            balance = usage["gpt-4"]["maxRequestUsage"] - usage["gpt-4"]["numRequests"]
-                            threshold = 50 
-                            is_low_balance = balance <= threshold
-                            print(f"[Balance Check] Email: {username}, UserID: {user_id}, Balance: {balance}, Threshold: {threshold}, Low Balance: {is_low_balance}")
-                        else:
-                            print(f"[Balance Check Warning] Could not get valid usage data for UserID: {user_id}. Usage response: {usage}")
-                            # 保持 balance=0, is_low_balance=False
-                        
-                        register_for_balance.browser.quit(force=True, del_data=True)
-                    else:
-                         print("[Balance Check Skip] Skipping balance check due to missing User ID.")
-                         
-            except Exception as e:
-                # 捕获解析或 API 调用中的其他潜在错误
-                print(f"[Balance Check Error] An unexpected error occurred during balance check: {e}") 
-            
+        for row in results: # 虽然现在只有一个结果，但保持循环结构
+            # 直接从结果中获取所有需要的信息
             token_csv_data.append({
-                'token': token,
-                'email': username,
-                'balance': str(balance),
-                'is_low_balance': str(is_low_balance)
+                'token': row.get('token'),
+                'email': row.get('username'),
+                'balance': str(row.get('balance', 0)), # 使用 get 获取，提供默认值
+                'is_low_balance': str(row.get('is_low_balance', False)) # 使用 get 获取，提供默认值
             })
             
         # 写入包含额度状态的token文件
