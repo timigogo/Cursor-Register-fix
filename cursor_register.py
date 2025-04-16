@@ -174,23 +174,29 @@ def register_cursor(reg_email):
     options = ChromiumOptions()
     options.auto_port()
     options.new_env()
+    
+    # --- 强制添加 headless 参数 for GitHub Actions --- 
+    print("[Info] Adding '--headless=new' argument for browser.")
+    options.set_argument('--headless=new')
+    # -------------------------------------------------
+    
     # Use turnstilePatch from https://github.com/TheFalloutOf76/CDP-bug-MouseEvent-.screenX-.screenY-patcher
     turnstile_patch_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "turnstilePatch"))
     options.add_extension(turnstile_patch_path)
 
-    # If fail to pass the cloudflare in headless mode, try to align the user agent with your real browser
-    if enable_headless: 
-        from platform import platform
-        if platform == "linux" or platform == "linux2":
-            platformIdentifier = "X11; Linux x86_64"
-        elif platform == "darwin":
-            platformIdentifier = "Macintosh; Intel Mac OS X 10_15_7"
-        elif platform == "win32":
-            platformIdentifier = "Windows NT 10.0; Win64; x64"
-        # Please align version with your Chrome
-        chrome_version = "130.0.0.0"        
-        options.set_user_agent(f"Mozilla/5.0 ({platformIdentifier}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_version} Safari/537.36")
-        options.headless()
+    # 注释掉旧的基于 enable_headless 的逻辑，因为我们强制使用 --headless=new
+    # if enable_headless: 
+    #     from platform import platform
+    #     if platform == "linux" or platform == "linux2":
+    #         platformIdentifier = "X11; Linux x86_64"
+    #     elif platform == "darwin":
+    #         platformIdentifier = "Macintosh; Intel Mac OS X 10_15_7"
+    #     elif platform == "win32":
+    #         platformIdentifier = "Windows NT 10.0; Win64; x64"
+    #     # Please align version with your Chrome
+    #     chrome_version = "130.0.0.0"        
+    #     options.set_user_agent(f"Mozilla/5.0 ({platformIdentifier}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_version} Safari/537.36")
+    #     options.headless() 
 
     # 直接打印要注册的邮箱
     print(f"[Register] Start to register account: {reg_email}")
