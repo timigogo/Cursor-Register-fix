@@ -3,35 +3,30 @@ name: Cursor Register
 on:
   workflow_dispatch:
     inputs:
-      number:
-        default: "2"
-        type: number
-        description: '使用临时邮箱时的注册数量（仅在TempEmail模式下有效）'
       max_workers:
         default: "1"
         type: number
-        description: '并发线程数'
-      email_server:
-        type: choice
-        options:
-        - TempEmail
-        - IMAP
-        description: '邮箱服务器类型'
+        description: '并发线程数 (在新模式下通常为1)'
       ingest_to_oneapi:
         description: '将账号令牌上传到OneAPI'
         type: boolean
+        default: false
       upload_artifact:
-        description: '将账号信息上传到构件'
+        description: '将账号信息上传到构件 (token_{date}.csv)'
         type: boolean
         default: true
-      use_config_file:
-        description: '是否从config.yaml读取邮箱配置'
-        type: boolean
-        default: true
-      email_configs:
-        description: '邮箱配置JSON字符串（仅在use_config_file=false时有效）'
+      registration_email:
+        description: '用于注册 Cursor 的完整邮箱地址 (由主项目生成)'
+        required: true
         type: string
-        default: '[]'
+      receiving_gmail_address:
+        description: '接收转发邮件的 Gmail 地址'
+        required: true
+        type: string
+      receiving_gmail_app_password:
+        description: '接收邮件的 Gmail 应用密码'
+        required: true
+        type: string
 
 jobs:
   build:
@@ -41,6 +36,14 @@ jobs:
       ENABLE_BROWSER_LOG: "false"
       PYTHONIOENCODING: "utf-8"
       PYTHONLEGACYWINDOWSSTDIO: "utf-8"
+      REGISTRATION_EMAIL: ${{ github.event.inputs.registration_email }}
+      RECEIVING_GMAIL_ADDRESS: ${{ github.event.inputs.receiving_gmail_address }}
+      RECEIVING_GMAIL_APP_PASSWORD: ${{ github.event.inputs.receiving_gmail_app_password }}
+      INGEST_TO_ONEAPI: ${{ github.event.inputs.ingest_to_oneapi }}
+      CURSOR_ONEAPI_URL: ${{ secrets.CURSOR_ONEAPI_URL }}
+      CURSOR_ONEAPI_TOKEN: ${{ secrets.CURSOR_ONEAPI_TOKEN }}
+      CURSOR_CHANNEL_URL: ${{ secrets.CURSOR_CHANNEL_URL }}
+      MAX_WORKERS: ${{ github.event.inputs.max_workers }}
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v5
@@ -50,93 +53,14 @@ jobs:
         run: |
           pip3 install -r ./requirements.txt
 
-      - name: "[TempEmail][OneAPI] Run script"
-        if: ${{ github.event.inputs.email_server == 'TempEmail' && github.event.inputs.ingest_to_oneapi == 'true' }}
-        run: |
-          python3 ./cursor_register.py register.number=${{ github.event.inputs.number }} register.max_workers=${{ github.event.inputs.max_workers }} `
-          register.email_server.name="temp_email_server" `
-          oneapi.enabled=true oneapi.url="${{ secrets.CURSOR_ONEAPI_URL }}" oneapi.token="${{ secrets.CURSOR_ONEAPI_TOKEN }}" oneapi.channel_url="${{ secrets.CURSOR_CHANNEL_URL }}" 
-
-      - name: "[TempEmail][CSV] Run script"
-        if: ${{ github.event.inputs.email_server == 'TempEmail' && github.event.inputs.ingest_to_oneapi == 'false' && github.event.inputs.upload_artifact == 'true' }}
-        run: |
-          python3 ./cursor_register.py register.number=${{ github.event.inputs.number }} register.max_workers=${{ github.event.inputs.max_workers }} `
-          register.email_server.name="temp_email_server"
-
-      - name: "[IMAP] Update email configuration"
-        if: ${{ github.event.inputs.email_server == 'IMAP' }}
-        run: |
-          $emailConfigs = '${{ github.event.inputs.email_configs }}'
-          python3 -c "
-          import yaml
-          import os
-          import json
-          import sys
-          
-          # 设置输出编码为utf-8
-          sys.stdout.reconfigure(encoding='utf-8')
-          
-          # 读取配置文件
-          with open('./config/config.yaml', 'r', encoding='utf-8') as f:
-              config = yaml.safe_load(f)
-          
-          # 设置邮箱服务器类型
-          config['register']['email_server']['name'] = 'imap_email_server'
-          config['register']['email_server']['use_custom_address'] = True
-          
-          # 设置并发线程数
-          config['register']['max_workers'] = ${{ github.event.inputs.max_workers }}
-          
-          # 设置OneAPI配置
-          if '${{ github.event.inputs.ingest_to_oneapi }}' == 'true':
-              if 'oneapi' not in config:
-                  config['oneapi'] = {}
-              config['oneapi']['enabled'] = True
-              config['oneapi']['url'] = '${{ secrets.CURSOR_ONEAPI_URL }}'
-              config['oneapi']['token'] = '${{ secrets.CURSOR_ONEAPI_TOKEN }}'
-              config['oneapi']['channel_url'] = '${{ secrets.CURSOR_CHANNEL_URL }}'
-          else:
-              if 'oneapi' not in config:
-                  config['oneapi'] = {}
-              config['oneapi']['enabled'] = False
-          
-          # 根据use_config_file参数决定是否使用传入的邮箱配置
-          if '${{ github.event.inputs.use_config_file }}' == 'false':
-              try:
-                  email_configs = json.loads('$emailConfigs')
-                  if not isinstance(email_configs, list):
-                      raise ValueError('email_configs must be a list')
-                  config['register']['email_server']['custom_email_addresses'] = email_configs
-                  # 确保保留原有的delete_low_balance_account相关配置
-                  if 'delete_low_balance_account' not in config['register']:
-                      config['register']['delete_low_balance_account'] = True
-                  if 'delete_low_balance_account_threshold' not in config['register']:
-                      config['register']['delete_low_balance_account_threshold'] = 50
-                  print(f'Using {len(email_configs)} email configurations from parameters')
-              except json.JSONDecodeError as e:
-                  print(f'Error parsing email_configs: {e}')
-                  sys.exit(1)
-          else:
-              print('Using email configurations from config.yaml')
-          
-          # 保存配置文件
-          with open('./config/config.yaml', 'w', encoding='utf-8') as f:
-              yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
-          
-          # 输出邮箱数量（使用英文）
-          email_count = len(config['register']['email_server'].get('custom_email_addresses', []))
-          print(f'Configured {email_count} email addresses')
-          "
-      
-      - name: "[IMAP] Run script"
-        if: ${{ github.event.inputs.email_server == 'IMAP' }}
+      - name: Run registration script
         run: |
           python3 ./cursor_register.py
 
-      - name: Upload csv files to artifact
+      - name: Upload account info artifact
         if: ${{ github.event.inputs.upload_artifact == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: "Account Info"
-          path: "*.csv"
+          path: "token_*.csv"
           retention-days: 1
