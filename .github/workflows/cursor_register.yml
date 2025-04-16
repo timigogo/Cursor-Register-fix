@@ -6,7 +6,7 @@ on:
       max_workers:
         default: "1"
         type: number
-        description: '并发线程数 (在新模式下通常为1)'
+        description: '并发线程数'
       ingest_to_oneapi:
         description: '将账号令牌上传到OneAPI'
         type: boolean
@@ -16,25 +16,31 @@ on:
         type: boolean
         default: true
       registration_email:
-        description: '用于注册 Cursor 的完整邮箱地址 (由主项目生成)'
-        required: true
-        type: string
-      receiving_gmail_address:
-        description: '接收转发邮件的 Gmail 地址'
-        required: true
-        type: string
-      receiving_gmail_app_password:
-        description: '接收邮件的 Gmail 应用密码'
+        description: '用于注册 Cursor 的完整邮箱地址'
         required: true
         type: string
       action_type:
         description: '执行的操作类型 (signin 或 signup)'
         required: true
         type: choice
-        options:
-          - signin
-          - signup
+        options: [signin, signup]
         default: 'signup'
+      receiving_imap_server:
+        description: '接收邮箱的 IMAP 服务器地址'
+        required: true
+        type: string
+      receiving_imap_port:
+        description: '接收邮箱的 IMAP SSL 端口'
+        required: true
+        type: string
+      receiving_username:
+        description: '接收邮箱的用户名 (通常是邮箱地址)'
+        required: true
+        type: string
+      receiving_password:
+        description: '接收邮箱的密码或应用密码'
+        required: true
+        type: string
 
 jobs:
   build:
@@ -45,8 +51,11 @@ jobs:
       PYTHONIOENCODING: "utf-8"
       PYTHONLEGACYWINDOWSSTDIO: "utf-8"
       REGISTRATION_EMAIL: ${{ github.event.inputs.registration_email }}
-      RECEIVING_GMAIL_ADDRESS: ${{ github.event.inputs.receiving_gmail_address }}
-      RECEIVING_GMAIL_APP_PASSWORD: ${{ github.event.inputs.receiving_gmail_app_password }}
+      ACTION_TYPE: ${{ github.event.inputs.action_type }}
+      RECEIVING_IMAP_SERVER: ${{ github.event.inputs.receiving_imap_server }}
+      RECEIVING_IMAP_PORT: ${{ github.event.inputs.receiving_imap_port }}
+      RECEIVING_USERNAME: ${{ github.event.inputs.receiving_username }}
+      RECEIVING_PASSWORD: ${{ github.event.inputs.receiving_password }}
       INGEST_TO_ONEAPI: ${{ github.event.inputs.ingest_to_oneapi }}
       CURSOR_ONEAPI_URL: ${{ secrets.CURSOR_ONEAPI_URL }}
       CURSOR_ONEAPI_TOKEN: ${{ secrets.CURSOR_ONEAPI_TOKEN }}
