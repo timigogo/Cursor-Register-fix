@@ -9,6 +9,8 @@ from faker import Faker
 from datetime import datetime
 # from omegaconf import OmegaConf, DictConfig # 暂时注释掉 OmegaConf
 from DrissionPage import ChromiumOptions, Chromium
+import base64
+import json
 
 # 设置控制台输出编码为UTF-8，避免中文字符编码问题
 if sys.stdout.encoding != 'utf-8':
@@ -181,23 +183,60 @@ def register_cursor(reg_email):
             # 增加余额状态检查
             is_low_balance = False
             balance = 0  # 默认值
+            user_id = None # 初始化 user_id
             try:
                 if token is not None:
-                    user_id = token.split("%3A%3A")[0]
-                    # 创建临时的 Register 对象来获取使用量，注意 options 需要复制
-                    temp_options = copy.deepcopy(options)
-                    temp_browser = Chromium(temp_options)
-                    register_for_balance = CursorRegister(temp_browser, None) # 不需要 email server
-                    usage = register_for_balance.get_usage(user_id)
-                    balance = usage["gpt-4"]["maxRequestUsage"] - usage["gpt-4"]["numRequests"]
-                    # 使用固定的阈值或从环境变量获取，但不再删除账号
-                    # threshold = register_config.delete_low_balance_account_threshold # 旧逻辑
-                    threshold = 50 # 或者从环境变量获取 os.getenv('LOW_BALANCE_THRESHOLD', 50)
-                    is_low_balance = balance <= threshold
-                    print(f"[Balance Check] Email: {username}, Balance: {balance}, Threshold: {threshold}, Low Balance: {is_low_balance}")
-                    register_for_balance.browser.quit(force=True, del_data=True)
+                    # --- 解析 JWT Token 以获取 User ID --- 
+                    try:
+                        # JWT 通常是 header.payload.signature
+                        payload_b64 = token.split('.')[1]
+                        # 需要补全 Base64 padding
+                        payload_b64 += '=' * (-len(payload_b64) % 4)
+                        # 解码 Base64 并解析 JSON
+                        payload_json = base64.urlsafe_b64decode(payload_b64).decode('utf-8')
+                        payload = json.loads(payload_json)
+                        # User ID 在 'sub' 字段
+                        user_id = payload.get('sub') 
+                        if user_id:
+                           print(f"[JWT Decode] Successfully extracted User ID: {user_id}")
+                        else:
+                           print("[JWT Decode Error] 'sub' field not found in JWT payload.")
+                           # 可以选择尝试旧格式解析作为后备
+                           # if '%3A%3A' in token:
+                           #    user_id = token.split('%3A%3A')[0]
+                           #    print(f"[Fallback] Using old format User ID: {user_id}")
+                    except Exception as jwt_err:
+                        print(f"[JWT Decode Error] Failed to decode or parse JWT: {jwt_err}")
+                        # 也可以尝试旧格式作为后备
+                        # if '%3A%3A' in token:
+                        #    user_id = token.split('%3A%3A')[0]
+                        #    print(f"[Fallback] Using old format User ID: {user_id}")
+
+                    # --- 使用提取到的 User ID 获取使用量 ---
+                    if user_id: # 仅当成功提取到 User ID 时才继续
+                        # user_id = token.split("%3A%3A")[0] # 旧逻辑移除
+                        temp_options = copy.deepcopy(options)
+                        temp_browser = Chromium(temp_options)
+                        register_for_balance = CursorRegister(temp_browser, None) 
+                        usage = register_for_balance.get_usage(user_id) 
+                        
+                        # 添加检查确保 usage 和 gpt-4 键存在
+                        if usage and 'gpt-4' in usage:
+                            balance = usage["gpt-4"]["maxRequestUsage"] - usage["gpt-4"]["numRequests"]
+                            threshold = 50 
+                            is_low_balance = balance <= threshold
+                            print(f"[Balance Check] Email: {username}, UserID: {user_id}, Balance: {balance}, Threshold: {threshold}, Low Balance: {is_low_balance}")
+                        else:
+                            print(f"[Balance Check Warning] Could not get valid usage data for UserID: {user_id}. Usage response: {usage}")
+                            # 保持 balance=0, is_low_balance=False
+                        
+                        register_for_balance.browser.quit(force=True, del_data=True)
+                    else:
+                         print("[Balance Check Skip] Skipping balance check due to missing User ID.")
+                         
             except Exception as e:
-                print(f"[Balance Check Error] {e}")
+                # 捕获解析或 API 调用中的其他潜在错误
+                print(f"[Balance Check Error] An unexpected error occurred during balance check: {e}") 
             
             token_csv_data.append({
                 'token': token,
