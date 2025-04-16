@@ -47,6 +47,7 @@ jobs:
     runs-on: windows-latest
     env:
       HIDE_ACCOUNT_INFO: "true"
+      ENABLE_HEADLESS: "true"
       ENABLE_BROWSER_LOG: "false"
       PYTHONIOENCODING: "utf-8"
       PYTHONLEGACYWINDOWSSTDIO: "utf-8"
