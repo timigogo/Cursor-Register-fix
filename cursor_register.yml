@@ -1,0 +1,66 @@
+name: Cursor Register
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_workers:
+        default: "1"
+        type: number
+        description: '并发线程数 (在新模式下通常为1)'
+      ingest_to_oneapi:
+        description: '将账号令牌上传到OneAPI'
+        type: boolean
+        default: false
+      upload_artifact:
+        description: '将账号信息上传到构件 (token_{date}.csv)'
+        type: boolean
+        default: true
+      registration_email:
+        description: '用于注册 Cursor 的完整邮箱地址 (由主项目生成)'
+        required: true
+        type: string
+      receiving_gmail_address:
+        description: '接收转发邮件的 Gmail 地址'
+        required: true
+        type: string
+      receiving_gmail_app_password:
+        description: '接收邮件的 Gmail 应用密码'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      HIDE_ACCOUNT_INFO: "true"
+      ENABLE_BROWSER_LOG: "false"
+      PYTHONIOENCODING: "utf-8"
+      PYTHONLEGACYWINDOWSSTDIO: "utf-8"
+      REGISTRATION_EMAIL: ${{ github.event.inputs.registration_email }}
+      RECEIVING_GMAIL_ADDRESS: ${{ github.event.inputs.receiving_gmail_address }}
+      RECEIVING_GMAIL_APP_PASSWORD: ${{ github.event.inputs.receiving_gmail_app_password }}
+      INGEST_TO_ONEAPI: ${{ github.event.inputs.ingest_to_oneapi }}
+      CURSOR_ONEAPI_URL: ${{ secrets.CURSOR_ONEAPI_URL }}
+      CURSOR_ONEAPI_TOKEN: ${{ secrets.CURSOR_ONEAPI_TOKEN }}
+      CURSOR_CHANNEL_URL: ${{ secrets.CURSOR_CHANNEL_URL }}
+      MAX_WORKERS: ${{ github.event.inputs.max_workers }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install requirements
+        run: |
+          pip3 install -r ./requirements.txt
+
+      - name: Run registration script
+        run: |
+          python3 ./cursor_register.py
+
+      - name: Upload account info artifact
+        if: ${{ github.event.inputs.upload_artifact == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: "Account Info"
+          path: "token_*.csv"
+          retention-days: 1
