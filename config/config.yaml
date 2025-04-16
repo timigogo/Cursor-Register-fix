@@ -1,7 +1,7 @@
 register:
   number: 1                                  # The account number you want to register
   max_workers: 1                             # Max worker number in multi-threading
-  delete_low_balance_account: true           # [IMAP only] Re-register account if the balance is not enough
+  delete_low_balance_account: false           # [IMAP only] Re-register account if the balance is not enough
   delete_low_balance_account_threshold: 60  # [IMAP only] Re-register account balance threshold
   email_server: 
     name: imap_email_server                  # Should be temp_email_server or imap_email_server

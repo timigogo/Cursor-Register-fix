@@ -4,10 +4,10 @@ import copy
 import argparse
 import concurrent.futures
 import sys
-import hydra
+# import hydra # 暂时注释掉 Hydra，可能不再需要
 from faker import Faker
 from datetime import datetime
-from omegaconf import OmegaConf, DictConfig
+# from omegaconf import OmegaConf, DictConfig # 暂时注释掉 OmegaConf
 from DrissionPage import ChromiumOptions, Chromium
 
 # 设置控制台输出编码为UTF-8，避免中文字符编码问题
@@ -19,68 +19,100 @@ if sys.stdout.encoding != 'utf-8':
         import io
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-from temp_mails import Tempmail_io, Guerillamail_com
+# from temp_mails import Tempmail_io, Guerillamail_com # 不再需要临时邮箱
 from helper.cursor_register import CursorRegister
-from helper.email import *
+from helper.email import * # 仍然需要 IMAP
 
 # Parameters for debugging purpose
 hide_account_info = os.getenv('HIDE_ACCOUNT_INFO', 'false').lower() == 'true'
 enable_headless = os.getenv('ENABLE_HEADLESS', 'false').lower() == 'true'
 enable_browser_log = os.getenv('ENABLE_BROWSER_LOG', 'true').lower() == 'true' or not enable_headless
 
-def register_cursor_core(register_config, options):
+# 新增：从环境变量读取核心配置
+registration_email = os.getenv('REGISTRATION_EMAIL')
+receiving_gmail_address = os.getenv('RECEIVING_GMAIL_ADDRESS')
+receiving_gmail_app_password = os.getenv('RECEIVING_GMAIL_APP_PASSWORD')
+ingest_to_oneapi = os.getenv('INGEST_TO_ONEAPI', 'false').lower() == 'true'
+oneapi_url = os.getenv('CURSOR_ONEAPI_URL')
+oneapi_token = os.getenv('CURSOR_ONEAPI_TOKEN')
+oneapi_channel_url = os.getenv('CURSOR_CHANNEL_URL')
+max_workers = int(os.getenv('MAX_WORKERS', '1')) # 虽然现在可能只跑一个，但保留
+
+# 新增：读取 Action 类型
+action_type = os.getenv('ACTION_TYPE', 'signup').lower() # 默认为 signup
+
+def register_cursor_core(reg_email, recv_email, recv_password, options):
 
     try:
-        # Maybe fail to open the browser
         browser = Chromium(options)
     except Exception as e:
         print(e)
         return None
     
-    if register_config.email_server.name == "temp_email_server":
-        email_server = eval(register_config.temp_email_server.name)(browser)
-        email_address = email_server.get_email_address()
-    elif register_config.email_server.name == "imap_email_server":
-        # 使用每个邮箱各自的IMAP配置
-        email_address = register_config.email_server.email_address
-        imap_config = register_config.email_server.imap_config
-        
-        imap_server = imap_config.imap_server
-        imap_port = imap_config.imap_port
-        imap_username = imap_config.username
-        imap_password = imap_config.password
-        
-        email_server = Imap(imap_server, imap_port, imap_username, imap_password, email_to=email_address)
+    # 直接设置邮箱地址
+    email_address = reg_email 
+    
+    # 直接实例化 IMAP 服务器，使用接收邮箱信息
+    # 注意: 需要确保 Imap 类能处理在 recv_email 中查找发往 reg_email 的邮件
+    # 这里假设 Imap 类构造函数或其方法支持这种查找方式
+    # 如果 Imap 类需要修改，需要单独处理 helper/email.py
+    print(f"[IMAP] Connecting to {recv_email} to find verification for {reg_email}")
+    try:
+      email_server = Imap(imap_server="imap.gmail.com", # Gmail IMAP 服务器
+                          imap_port=993, # Gmail IMAP SSL 端口
+                          imap_username=recv_email, 
+                          imap_password=recv_password,
+                          email_to=reg_email) # 传递目标注册邮箱给 Imap 类
+    except Exception as e:
+        print(f"[IMAP Error] Failed to connect or initialize IMAP for {recv_email}: {e}")
+        if browser:
+            browser.quit(force=True, del_data=True)
+        return None # 初始化失败，无法继续
 
     register = CursorRegister(browser, email_server)
-    tab_signin, status = register.sign_in(email_address)
-    #tab_signup, status = register.sign_up(email_address)
-    token = register.get_cursor_cookie(tab_signin)
+    
+    # --- 根据 action_type 执行操作 --- 
+    token = None
+    final_tab = None 
+    final_status = False
 
-    if token is not None:
-        user_id = token.split("%3A%3A")[0]
-        delete_low_balance_account = register_config.delete_low_balance_account
-        if register_config.email_server.name == "imap_email_server" and delete_low_balance_account:
-            delete_low_balance_account_threshold = register_config.delete_low_balance_account_threshold
+    if action_type == 'signin':
+        print(f"[Register] Action Type: signin. Attempting sign in for {email_address}...")
+        tab_signin, status_signin = register.sign_in(email_address)
+        token = register.get_cursor_cookie(tab_signin)
+        final_tab = tab_signin
+        final_status = token is not None
+        if not final_status:
+            print(f"[Register] Sign in for {email_address} failed or did not yield token.")
+            # 对于 signin 失败，通常不需要尝试 signup，因为意味着账号或验证流程有问题
 
-            usage = register.get_usage(user_id)
-            balance = usage["gpt-4"]["maxRequestUsage"] - usage["gpt-4"]["numRequests"]
-            if balance <= delete_low_balance_account_threshold:
-                print(f"[Low Balance] Account balance ({balance}) is less than or equal to threshold ({delete_low_balance_account_threshold}), executing delete and re-register")
-                register.delete_account()
-                print("[Low Balance] Account deleted, starting re-registration")
-                # 使用sign_up而不是sign_in来确保重新注册账号
-                tab_signup, status = register.sign_up(email_address)
-                token = register.get_cursor_cookie(tab_signup)
-                if token is not None:
-                    print("[Low Balance] Re-registration successful")
-                else:
-                    print("[Low Balance] Re-registration failed")
+    elif action_type == 'signup':
+        print(f"[Register] Action Type: signup. Attempting sign up for {email_address}...")
+        tab_signup, status_signup = register.sign_up(email_address)
+        token = register.get_cursor_cookie(tab_signup)
+        final_tab = tab_signup
+        final_status = token is not None
+        if not final_status:
+             print(f"[Register] Sign up for {email_address} failed or did not yield token.")
 
-    if status or not enable_browser_log:
-        register.browser.quit(force=True, del_data=True)
+    else: # 未知的 action_type
+        print(f"[Error] Unknown ACTION_TYPE: {action_type}. Aborting.")
+        # final_status 保持 False
 
-    if status and not hide_account_info:
+    # 浏览器退出逻辑
+    # final_status = token is not None # 这行已被上面的逻辑替代
+    if not final_status or not enable_browser_log:
+        # 确保 final_tab 存在才尝试关闭，尽管 quit 会关闭所有
+        # if final_tab: 
+        #    try: final_tab.close() except: pass 
+        # 退出浏览器实例
+        if browser:
+            try:
+                browser.quit(force=True, del_data=True)
+            except Exception as quit_error:
+                 print(f"[Warning] Error quitting browser: {quit_error}")
+
+    if final_status and not hide_account_info:
         print(f"[Register] Cursor Email: {email_address}")
         print(f"[Register] Cursor Token: {token}")
 
@@ -91,7 +123,7 @@ def register_cursor_core(register_config, options):
 
     return ret
 
-def register_cursor(register_config):
+def register_cursor(reg_email, recv_email, recv_password):
 
     options = ChromiumOptions()
     options.auto_port()
@@ -114,37 +146,12 @@ def register_cursor(register_config):
         options.set_user_agent(f"Mozilla/5.0 ({platformIdentifier}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_version} Safari/537.36")
         options.headless()
 
-    number = register_config.number
-    max_workers = register_config.max_workers
-    print(f"[Register] Start to register {number} accounts in {max_workers} threads")
+    # 直接打印要注册的邮箱
+    print(f"[Register] Start to register account: {reg_email}")
 
-    # Run the code using multithreading
-    results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = []
-        for idx in range(number):
-            register_config_thread = copy.deepcopy(register_config)
-            use_custom_address = register_config.email_server.use_custom_address
-            
-            if use_custom_address and register_config.email_server.name == "imap_email_server":
-                # 获取指定索引的自定义邮箱配置
-                if hasattr(register_config.email_server, 'custom_email_addresses') and idx < len(register_config.email_server.custom_email_addresses):
-                    email_config = register_config.email_server.custom_email_addresses[idx]
-                    # 设置邮箱地址和对应的IMAP配置
-                    register_config_thread.email_server.email_address = email_config.email
-                    register_config_thread.email_server.imap_config = email_config
-                else:
-                    print(f"[Register] Warning: No email configuration found for index {idx}")
-                    continue
-            
-            options_thread = copy.deepcopy(options)
-            futures.append(executor.submit(register_cursor_core, register_config_thread, options_thread))
-        for future in concurrent.futures.as_completed(futures):
-            result = future.result()
-            if result is not None:
-                results.append(result)
-
-    results = [result for result in results if result["token"] is not None]
+    # 直接调用核心注册函数
+    result = register_cursor_core(reg_email, recv_email, recv_password, options)
+    results = [result] if result and result.get("token") else [] # 保证 results 是列表
 
     if len(results) > 0:
         formatted_date = datetime.now().strftime("%Y-%m-%d")
@@ -154,71 +161,98 @@ def register_cursor(register_config):
         with open(f"./output_{formatted_date}.csv", 'a', newline='') as file:
             writer = csv.DictWriter(file, fieldnames=fieldnames)
             writer.writerows(results)
-        # Only write token to csv file, without header
-        tokens = [{'token': row['token']} for row in results]
-        with open( f"./token_{formatted_date}.csv", 'a', newline='') as file:
-            writer = csv.DictWriter(file, fieldnames=['token'])
-            writer.writerows(tokens)
+        
+        # 修改token.csv文件，加入邮箱和额度状态信息
+        token_csv_data = []
+        for row in results:
+            token = row['token']
+            username = row['username']
+            
+            # 增加余额状态检查
+            is_low_balance = False
+            balance = 0  # 默认值
+            try:
+                if token is not None:
+                    user_id = token.split("%3A%3A")[0]
+                    # 创建临时的 Register 对象来获取使用量，注意 options 需要复制
+                    temp_options = copy.deepcopy(options)
+                    temp_browser = Chromium(temp_options)
+                    register_for_balance = CursorRegister(temp_browser, None) # 不需要 email server
+                    usage = register_for_balance.get_usage(user_id)
+                    balance = usage["gpt-4"]["maxRequestUsage"] - usage["gpt-4"]["numRequests"]
+                    # 使用固定的阈值或从环境变量获取，但不再删除账号
+                    # threshold = register_config.delete_low_balance_account_threshold # 旧逻辑
+                    threshold = 50 # 或者从环境变量获取 os.getenv('LOW_BALANCE_THRESHOLD', 50)
+                    is_low_balance = balance <= threshold
+                    print(f"[Balance Check] Email: {username}, Balance: {balance}, Threshold: {threshold}, Low Balance: {is_low_balance}")
+                    register_for_balance.browser.quit(force=True, del_data=True)
+            except Exception as e:
+                print(f"[Balance Check Error] {e}")
+            
+            token_csv_data.append({
+                'token': token,
+                'email': username,
+                'balance': str(balance),
+                'is_low_balance': str(is_low_balance)
+            })
+            
+        # 写入包含额度状态的token文件
+        with open(f"./token_{formatted_date}.csv", 'a', newline='') as file:
+            writer = csv.DictWriter(file, fieldnames=['token', 'email', 'balance', 'is_low_balance'])
+            writer.writerows(token_csv_data)
 
     return results
 
-@hydra.main(config_path="config", config_name="config", version_base=None)
-def main(config: DictConfig):
-    OmegaConf.set_struct(config, False)
+def main():
+    # OmegaConf.set_struct(config, False) # 移除
     
-    # 从环境变量获取是否使用配置文件
-    use_config_file = os.getenv('USE_CONFIG_FILE', 'true').lower() == 'true'
-    email_configs_str = os.getenv('EMAIL_CONFIGS', '[]')
+    # 移除旧的从环境变量或 config 文件加载邮箱配置的逻辑
+    # use_config_file = ...
+    # email_configs_str = ...
+    # if not use_config_file: ...
+    # else: ...
+
+    # 移除旧的 config 验证逻辑
+    # email_server_name = ...
+    # use_custom_address = ...
+    # assert ...
+    # if use_custom_address and ...
+
+    # 检查必要的环境变量是否已设置
+    if not registration_email or not receiving_gmail_address or not receiving_gmail_app_password:
+        print("[Error] Missing required environment variables: REGISTRATION_EMAIL, RECEIVING_GMAIL_ADDRESS, RECEIVING_GMAIL_APP_PASSWORD")
+        sys.exit(1)
+
+    # 调用修改后的 register_cursor 函数
+    # account_infos = register_cursor(config.register) # 旧调用
+    account_infos = register_cursor(registration_email, receiving_gmail_address, receiving_gmail_app_password)
     
-    if not use_config_file:
-        try:
-            import json
-            email_configs = json.loads(email_configs_str)
-            if not isinstance(email_configs, list):
-                raise ValueError('EMAIL_CONFIGS must be a list')
-            # 使用环境变量中的邮箱配置覆盖配置文件
-            config.register.email_server.custom_email_addresses = email_configs
-            print(f'Using {len(email_configs)} email configurations from environment variables')
-        except json.JSONDecodeError as e:
-            print(f'Error parsing EMAIL_CONFIGS: {e}')
-            return
-    else:
-        print('Using email configurations from config.yaml')
-    
-    # Validate the config
-    email_server_name = config.register.email_server.name
-    use_custom_address = config.register.email_server.use_custom_address
-    
-    assert email_server_name in ["temp_email_server", "imap_email_server"], "email_server_name should be either temp_email_server or imap_email_server"
-    assert use_custom_address and email_server_name == "imap_email_server" or not use_custom_address, "use_custom_address should be True only when email_server_name is imap_email_server"
-    
-    if use_custom_address and email_server_name == "imap_email_server":
-        # 检查和使用自定义邮箱配置
-        if hasattr(config.register.email_server, 'custom_email_addresses'):
-            config.register.number = len(config.register.email_server.custom_email_addresses)
-            print(f"[Register] Parameter register.number is overwritten by the length of custom_email_addresses: {config.register.number}")
-        else:
-            raise ValueError("custom_email_addresses is required when use_custom_address=true with imap_email_server")
-    
-    account_infos = register_cursor(config.register)
-    tokens = list(set([row['token'] for row in account_infos]))
+    tokens = list(set([row['token'] for row in account_infos if row and row.get('token')])) # 确保处理 None
     print(f"[Register] Register {len(tokens)} accounts successfully")
     
-    if config.oneapi.enabled and len(account_infos) > 0:
-        from tokenManager.oneapi_manager import OneAPIManager
-        from tokenManager.cursor import Cursor
+    # 保留 OneAPI 上传逻辑，检查环境变量 ingest_to_oneapi
+    # if config.oneapi.enabled and len(account_infos) > 0: # 旧检查
+    if ingest_to_oneapi and len(tokens) > 0:
+        # 检查 OneAPI 配置
+        if not oneapi_url or not oneapi_token:
+            print("[Warning] Ingest to OneAPI is enabled, but CURSOR_ONEAPI_URL or CURSOR_ONEAPI_TOKEN is missing.")
+        else:
+            print("[OneAPI] Starting to upload tokens to OneAPI...")
+            from tokenManager.oneapi_manager import OneAPIManager
+            # from tokenManager.cursor import Cursor # Cursor 类似乎没有用到
 
-        oneapi_url = config.oneapi.url
-        oneapi_token = config.oneapi.token
-        oneapi_channel_url = config.oneapi.channel_url
+            # oneapi_url = config.oneapi.url # 从环境变量读取
+            # oneapi_token = config.oneapi.token # 从环境变量读取
+            # oneapi_channel_url = config.oneapi.channel_url # 从环境变量读取
 
-        oneapi = OneAPIManager(oneapi_url, oneapi_token)
-        # Send request by batch to avoid "Too many SQL variables" error in SQLite.
-        # If you use MySQL, better to set the batch_size as len(tokens)
-        batch_size = min(10, len(tokens))
-        for i in range(0, len(tokens), batch_size):
-            batch_tokens = tokens[i:i+batch_size]
-            oneapi.batch_add_channel(batch_tokens, oneapi_channel_url)
+            oneapi = OneAPIManager(oneapi_url, oneapi_token)
+            batch_size = min(10, len(tokens))
+            for i in range(0, len(tokens), batch_size):
+                batch_tokens = tokens[i:i+batch_size]
+                # 确保 oneapi_channel_url 有值，或者提供默认值
+                channel_url = oneapi_channel_url if oneapi_channel_url else "http://localhost:3000" # 提供一个默认值或报错
+                oneapi.batch_add_channel(batch_tokens, channel_url)
+            print("[OneAPI] Finished uploading tokens.")
 
 if __name__ == "__main__":
     main()
