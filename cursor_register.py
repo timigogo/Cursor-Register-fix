@@ -207,8 +207,17 @@ def register_cursor(reg_email):
             })
             
         # 写入包含额度状态的token文件
-        with open(f"./token_{formatted_date}.csv", 'a', newline='') as file:
-            writer = csv.DictWriter(file, fieldnames=['token', 'email', 'balance', 'is_low_balance'])
+        token_file_path = f"./token_{formatted_date}.csv"
+        # 检查文件是否已存在，不存在则先写入表头
+        write_header = not os.path.exists(token_file_path)
+        
+        with open(token_file_path, 'a', newline='', encoding='utf-8') as file: # 添加 encoding='utf-8'
+            fieldnames = ['token', 'email', 'balance', 'is_low_balance']
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            
+            if write_header:
+                writer.writeheader() # 写入表头行
+                
             writer.writerows(token_csv_data)
 
     return results
