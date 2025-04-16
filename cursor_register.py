@@ -28,6 +28,11 @@ hide_account_info = os.getenv('HIDE_ACCOUNT_INFO', 'false').lower() == 'true'
 enable_headless = os.getenv('ENABLE_HEADLESS', 'false').lower() == 'true'
 enable_browser_log = os.getenv('ENABLE_BROWSER_LOG', 'true').lower() == 'true' or not enable_headless
 
+# --- 添加调试日志 ---
+print(f"[Debug] ENABLE_HEADLESS environment variable: {os.getenv('ENABLE_HEADLESS')}")
+print(f"[Debug] enable_headless variable set to: {enable_headless}")
+# --- 结束调试日志 ---
+
 # 新增：从环境变量读取核心配置
 registration_email = os.getenv('REGISTRATION_EMAIL')
 receiving_gmail_address = os.getenv('RECEIVING_GMAIL_ADDRESS')
