@@ -39,9 +39,15 @@ oneapi_channel_url = os.getenv('CURSOR_CHANNEL_URL')
 max_workers = int(os.getenv('MAX_WORKERS', '1')) # 虽然现在可能只跑一个，但保留
 
 # 新增：读取 Action 类型
-action_type = os.getenv('ACTION_TYPE', 'signup').lower() # 默认为 signup
+action_type = os.getenv('ACTION_TYPE', 'signup').lower()
 
-def register_cursor_core(reg_email, recv_email, recv_password, options):
+# 新增：读取接收邮箱的 IMAP 配置
+receiving_imap_server = os.getenv('RECEIVING_IMAP_SERVER')
+receiving_imap_port = os.getenv('RECEIVING_IMAP_PORT')
+receiving_username = os.getenv('RECEIVING_USERNAME')
+receiving_password = os.getenv('RECEIVING_PASSWORD')
+
+def register_cursor_core(reg_email, options):
 
     try:
         browser = Chromium(options)
@@ -52,19 +58,23 @@ def register_cursor_core(reg_email, recv_email, recv_password, options):
     # 直接设置邮箱地址
     email_address = reg_email 
     
-    # 直接实例化 IMAP 服务器，使用接收邮箱信息
-    # 注意: 需要确保 Imap 类能处理在 recv_email 中查找发往 reg_email 的邮件
-    # 这里假设 Imap 类构造函数或其方法支持这种查找方式
-    # 如果 Imap 类需要修改，需要单独处理 helper/email.py
-    print(f"[IMAP] Connecting to {recv_email} to find verification for {reg_email}")
+    # 使用从环境变量读取的配置实例化 IMAP 服务器
+    print(f"[IMAP] Connecting to {receiving_username}@{receiving_imap_server} to find verification for {reg_email}")
     try:
-      email_server = Imap(imap_server="imap.gmail.com", # Gmail IMAP 服务器
-                          imap_port=993, # Gmail IMAP SSL 端口
-                          imap_username=recv_email, 
-                          imap_password=recv_password,
-                          email_to=reg_email) # 传递目标注册邮箱给 Imap 类
+      # 检查配置是否存在
+      if not all([receiving_imap_server, receiving_imap_port, receiving_username, receiving_password]):
+          raise ValueError("接收邮箱的 IMAP 配置环境变量不完整")
+      
+      # 注意端口需要是整数
+      imap_port_int = int(receiving_imap_port)
+      
+      email_server = Imap(imap_server=receiving_imap_server, 
+                          imap_port=imap_port_int, 
+                          username=receiving_username, 
+                          password=receiving_password,
+                          email_to=reg_email) # 仍然传递注册邮箱用于可能的过滤
     except Exception as e:
-        print(f"[IMAP Error] Failed to connect or initialize IMAP for {recv_email}: {e}")
+        print(f"[IMAP Error] Failed to connect or initialize IMAP for {receiving_username}: {e}")
         if browser:
             browser.quit(force=True, del_data=True)
         return None # 初始化失败，无法继续
@@ -123,7 +133,7 @@ def register_cursor_core(reg_email, recv_email, recv_password, options):
 
     return ret
 
-def register_cursor(reg_email, recv_email, recv_password):
+def register_cursor(reg_email):
 
     options = ChromiumOptions()
     options.auto_port()
@@ -149,9 +159,9 @@ def register_cursor(reg_email, recv_email, recv_password):
     # 直接打印要注册的邮箱
     print(f"[Register] Start to register account: {reg_email}")
 
-    # 直接调用核心注册函数
-    result = register_cursor_core(reg_email, recv_email, recv_password, options)
-    results = [result] if result and result.get("token") else [] # 保证 results 是列表
+    # 直接调用核心注册函数 (移除旧参数)
+    result = register_cursor_core(reg_email, options)
+    results = [result] if result and result.get("token") else [] 
 
     if len(results) > 0:
         formatted_date = datetime.now().strftime("%Y-%m-%d")
@@ -219,13 +229,16 @@ def main():
     # if use_custom_address and ...
 
     # 检查必要的环境变量是否已设置
-    if not registration_email or not receiving_gmail_address or not receiving_gmail_app_password:
-        print("[Error] Missing required environment variables: REGISTRATION_EMAIL, RECEIVING_GMAIL_ADDRESS, RECEIVING_GMAIL_APP_PASSWORD")
+    if not registration_email:
+        print("[Error] Missing required environment variable: REGISTRATION_EMAIL")
         sys.exit(1)
+    # 现在 IMAP 配置检查移到 register_cursor_core 内部
+    # if not all([receiving_imap_server, receiving_imap_port, receiving_username, receiving_password]):
+    #     print("[Error] Missing required environment variables for receiving email config")
+    #     sys.exit(1)
 
-    # 调用修改后的 register_cursor 函数
-    # account_infos = register_cursor(config.register) # 旧调用
-    account_infos = register_cursor(registration_email, receiving_gmail_address, receiving_gmail_app_password)
+    # 调用修改后的 register_cursor 函数 (移除旧参数)
+    account_infos = register_cursor(registration_email)
     
     tokens = list(set([row['token'] for row in account_infos if row and row.get('token')])) # 确保处理 None
     print(f"[Register] Register {len(tokens)} accounts successfully")
